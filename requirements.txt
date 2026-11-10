@@ -1,0 +1,3 @@
+yt-dlp>=2024.10
+imageio-ffmpeg>=0.5
+playwright>=1.44

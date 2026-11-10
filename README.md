@@ -46,7 +46,7 @@
 链接经 yt-dlp 提取格式列表，软件按“同清晰度（高+帧率）只保留码率最好的一条”
 整理成下载条目；分离的音视频轨由内置 ffmpeg 无损合并（`-c copy`）。
 
-### 抖音（本项目迭代四代才打通的部分，详见 [CHANGELOG.md](CHANGELOG.md)）
+### 抖音
 1. **yt-dlp 提取器已不可用**：抖音网页详情接口上了 `a_bogus` 签名墙，yt-dlp 未实现
    该签名，有效的登录 Cookie 也会报 `Fresh cookies are needed`（上游 #9667）。
 2. **纯 HTTP 抓页面也拿不到数据**：服务器对非浏览器请求返回 862KB 的**空壳页面**，
@@ -54,7 +54,7 @@
 3. **浏览器读 Cookie 此路不通**：Chrome 与新版 Edge 采用应用绑定加密
    （App-Bound Encryption），Cookie 库能读出条数、值解不开（DPAPI 错误），
    任何外部程序都无法直接借用日常浏览器的登录态。
-4. **最终方案——专属档案 + 真浏览器抓取**：软件用 Playwright 驱动用户电脑上的
+4. **当前实现：专属档案 + 浏览器抓取**：软件用 Playwright 驱动用户电脑上的
    Edge，使用一个**专属持久档案**（`%LOCALAPPDATA%\ParseTool\EdgeProfile`）保存
    登录态；打开视频页后监听页面自己发出的 `aweme/v1/web/aweme/detail` 接口返回，
    拿到全清晰度数据；再以直链方式（带 UA/Referer/Cookie）流式下载。

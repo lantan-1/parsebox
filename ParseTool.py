@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ParseBox 解析盒 · 本地解析工具 v6.1（模仿 ParseDock 的三步流程）
+ParseBox 解析盒 · 本地解析工具 v6.2（模仿 ParseDock 的三步流程）
 粘贴链接/整段分享文案 -> 解析 -> 选清晰度 -> 下载原视频 / 原图 / 音频
 
 支持：抖音、B站、小红书、快手、微博、西瓜、YouTube、TikTok、Instagram、X 等
@@ -942,6 +942,65 @@ def profile_has_session(log=None):
         return False
 
 
+def cookie_domain_for(url):
+    """从网址取 Cookie 域名（.example.com 形式），供写 cookies 文件用。"""
+    host = urllib.parse.urlparse(url).netloc.split(":")[0]
+    parts = host.split(".")
+    if len(parts) > 2:
+        host = ".".join(parts[-2:])
+    return "." + host
+
+
+def profile_cookies_for(url, log=None):
+    """从专属档案取指定网址的 Cookie（按 URL 匹配域名），返回 {name: value}；
+    没有登录态或出错返回空 dict。"""
+    say = log or (lambda s: None)
+    try:
+        sync_playwright = _ensure_playwright(say)
+        with sync_playwright() as p:
+            ctx = _launch_persistent(p, say, headless=True)
+            try:
+                out = {}
+                for c in ctx.cookies(url):
+                    if c.get("name"):
+                        out[c["name"]] = c.get("value") or ""
+                return out
+            finally:
+                ctx.close()
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def site_profile_login(url, log=None, timeout_s=300):
+    """在专属档案里打开可见窗口到目标站点，等用户登录后关闭窗口（或超时）再返回。
+    窗口流程跑完返回 True，启动失败返回 False。"""
+    say = log or (lambda s: None)
+    try:
+        sync_playwright = _ensure_playwright(say)
+        with sync_playwright() as p:
+            ctx = _launch_persistent(p, say, headless=False)
+            page = ctx.pages[0] if ctx.pages else ctx.new_page()
+            try:
+                page.goto(url, wait_until="domcontentloaded", timeout=45000)
+            except Exception:  # noqa: BLE001
+                pass
+            say("已打开专属浏览器窗口：请在窗口里登录该网站，登录完成后关闭窗口，软件会自动继续。")
+            deadline = time.time() + timeout_s
+            while time.time() < deadline:
+                try:
+                    page.wait_for_timeout(700)
+                except Exception:  # noqa: BLE001
+                    break  # 窗口被关闭
+            try:
+                ctx.close()
+            except Exception:  # noqa: BLE001
+                pass
+            return True
+    except Exception as e:  # noqa: BLE001
+        say(f"档案登录窗口异常：{clean_text(e)[:100]}")
+        return False
+
+
 # ---------------------------------------------------------- v2: 支持平台清单
 
 PLATFORMS_TEXT = """支持平台清单（引擎 yt-dlp，支持 1000+ 站点，此处只列主流）
@@ -977,7 +1036,7 @@ PLATFORMS_TEXT = """支持平台清单（引擎 yt-dlp，支持 1000+ 站点，�
 class App:
     def __init__(self, root):
         self.root = root
-        root.title("ParseBox 解析盒 · 本地解析工具 v6.1")
+        root.title("ParseBox 解析盒 · 本地解析工具 v6.2")
         root.geometry("820x640")
         root.minsize(720, 560)
         try:
@@ -1002,7 +1061,7 @@ class App:
         ttk.Label(head, text="ParseBox 解析盒", font=("Microsoft YaHei UI", 14, "bold")).pack(side="left")
         ttk.Label(head, text="粘贴链接 → 解析 → 下载原视频 / 原图 / 音频",
                   foreground="#666").pack(side="left", padx=(10, 0))
-        ttk.Label(head, text="v6.1", foreground="#999").pack(side="right")
+        ttk.Label(head, text="v6.2", foreground="#999").pack(side="right")
 
         top = ttk.Frame(root)
         top.pack(fill="x", **pad)
@@ -1182,6 +1241,41 @@ class App:
         with yt_dlp.YoutubeDL(opts) as ydl:
             return ydl.extract_info(url, download=False)
 
+    def _profile_fallback(self, url):
+        """通用档案回退（v6.2）：先用专属档案里已有的 Cookie 重试解析；没有登录态
+        则打开专属窗口让用户登录一次再重试。成功返回 (info, via)，否则返回 None。
+        同一域名在一次运行里最多弹一次登录窗口。"""
+        ck = profile_cookies_for(url, log=self.log)
+        if ck:
+            self.log(f"改用档案里已有的 Cookie 重试（{len(ck)} 条）…")
+            extra = {"cookiefile": write_cookies_file(
+                ck, domain=cookie_domain_for(url),
+                path=os.path.join(tempfile.gettempdir(), "parsebox_profile_cookies.txt"))}
+            info = self._extract_once(url, extra)
+            self.working_cookie_extra = extra
+            return info, "浏览器档案Cookie"
+        shown = getattr(self, "_profile_login_shown", None)
+        if shown is None:
+            shown = self._profile_login_shown = set()
+        dom = cookie_domain_for(url)
+        if dom in shown:
+            return None
+        shown.add(dom)
+        self.log("常规方式没成功，档案里也没有这个网站的登录态：打开专属窗口登录一次…")
+        self.root.after(0, lambda: self.status_var.set("等待在专属窗口登录…"))
+        if not site_profile_login(url, log=self.log):
+            return None
+        ck = profile_cookies_for(url, log=self.log)
+        if not ck:
+            self.log("登录流程结束，但没有取到该网站的 Cookie，跳过档案方式。")
+            return None
+        extra = {"cookiefile": write_cookies_file(
+            ck, domain=cookie_domain_for(url),
+            path=os.path.join(tempfile.gettempdir(), "parsebox_profile_cookies.txt"))}
+        info = self._extract_once(url, extra)
+        self.working_cookie_extra = extra
+        return info, "浏览器档案Cookie（刚登录）"
+
     def _douyin_cookie_str(self):
         """为抖音专用解析准备 Cookie 头：优先用户选的 cookies.txt，其次自领访客。
         同时把 dict 存到 self._dy_cookies，浏览器模式注入时复用。"""
@@ -1314,6 +1408,15 @@ class App:
             self.working_cookie_extra = extra
             emit_done(info, name)
             return
+        if mode.startswith("自动"):
+            try:
+                got = self._profile_fallback(url)
+                if got is not None:
+                    info, via = got
+                    emit_done(info, via)
+                    return
+            except Exception as e:  # noqa: BLE001
+                self.log(f"档案方式也没成：{clean_text(e)[:120]}")
         # 全失败：抖音场景优先展示 Edge 的报错（最相关），提示则综合所有报错一起给
         display = attempt_errors[-1][1] if attempt_errors else "未知错误"
         for name, m in attempt_errors:

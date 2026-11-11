@@ -10,7 +10,7 @@ from ParseTool import (extract_url, build_rows, collect_image_urls, friendly_err
                        load_cookies_from_file, cookie_header, douyin_id_from_url,
                        page_diagnostics, playwright_cookie_list, cookies_to_netscape,
                        profile_dir, profile_exists, profile_has_session,
-                       extract_urls, pick_best_row)
+                       extract_urls, pick_best_row, cookie_domain_for)
 
 fails = 0
 def check(name, cond):
@@ -220,11 +220,11 @@ check("profile nonempty dir exists", profile_exists(_td5) is True)
 # 4.20) v6: 品牌与 UI 清理（两个过时按钮文案消失、品牌名就位、自动登录函数存在）
 _src6 = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "ParseTool.py"),
              encoding="utf-8").read()
-check("v6 brand present", "ParseBox 解析盒" in _src6 and "v6.1" in _src6)
+check("v6 brand present", "ParseBox 解析盒" in _src6 and "v6.2" in _src6)
 check("v6 obsolete buttons gone", "关闭Edge并解析" not in _src6 and "抖音登录（档案）" not in _src6)
 check("v6 autologin wired", "profile_has_session" in _src6 and "自动再弹出登录窗口" in _src6)
 
-# 4.21) v6.1 批量：多链接提取（混合文案/多平台/BV/去重/上限）
+# 4.21) v6.2 批量：多链接提取（混合文案/多平台/BV/去重/上限）
 _blob = ("9.99 复制打开抖音 https://v.douyin.com/abc123/ 看看\n"
          "B站这个 https://www.bilibili.com/video/BV1xx411c7mD 不错\n"
          "还有一个裸号 BV1yy411c7mE 和重复的 https://v.douyin.com/abc123/ \n"
@@ -238,7 +238,7 @@ check("batch urls empty", extract_urls("") == [] and extract_urls("没有链接"
 check("batch urls cap", len(extract_urls(" ".join(
     f"https://example.com/v{i}" for i in range(40)))) == 30)
 
-# 4.22) v6.1 批量：每条选最佳行
+# 4.22) v6.2 批量：每条选最佳行
 check("best row: kind best wins", pick_best_row(
     [{"kind": "video", "height": 2160}, {"kind": "best"}])["kind"] == "best")
 check("best row: tallest video", pick_best_row(
@@ -252,7 +252,7 @@ check("best row: empty", pick_best_row([]) is None)
 
 import ParseTool
 
-# 4.23) v6.1 批量：解析收集管道（假解析器驱动 _batch_parse_worker）
+# 4.23) v6.2 批量：解析收集管道（假解析器驱动 _batch_parse_worker）
 class _FakeRoot:
     def after(self, ms, fn=None):
         return None  # 不执行 UI 收尾，只验证数据管道
@@ -292,7 +292,7 @@ check("batch pipe failure recorded", "error" in _res[1])
 check("batch pipe generic rows built", len(_res[2]["rows"]) >= 1
       and _res[2]["cookie_extra"] == {"cookiesfrombrowser": ("edge",)})
 
-# 4.24) v6.1 下载分发 _dl_one（桩方法验证路由）
+# 4.24) v6.2 下载分发 _dl_one（桩方法验证路由）
 _app2 = ParseTool.App.__new__(ParseTool.App)
 _app2.log = lambda s: None
 _app2.info = {"webpage_url": "https://example.com/watch", "title": "t", "id": "9"}
@@ -303,6 +303,17 @@ check("dl_one direct", _app2._dl_one({"direct": True, "url": "http://x/v.mp4"}, 
 check("dl_one cover", _app2._dl_one({"kind": "cover", "url": "http://x/c.jpg"}, "/tmp") == "封面已保存：/tmp/i.jpg")
 check("dl_one images", _app2._dl_one({"kind": "images", "urls": ["u1", "u2"], "count": 2}, "/tmp") == "图集下载完成：2/2 张")
 check("dl_one media", _app2._dl_one({"kind": "best"}, "/tmp") == "media-ok")
+
+# 4.25) v6.2 通用档案：Cookie 域名提取与接线
+check("cookie domain www", cookie_domain_for("https://www.bilibili.com/video/BV1") == ".bilibili.com")
+check("cookie domain bare", cookie_domain_for("https://youtu.be/abc") == ".youtu.be")
+check("cookie domain sub", cookie_domain_for("https://music.163.com/song?id=1") == ".163.com")
+check("cookie domain port", cookie_domain_for("https://example.com:8080/x") == ".example.com")
+_src62 = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "ParseTool.py"),
+              encoding="utf-8").read()
+check("v6.2 profile fallback wired",
+      "def _profile_fallback" in _src62 and "profile_cookies_for" in _src62
+      and "site_profile_login" in _src62 and "浏览器档案Cookie" in _src62)
 
 # 5) 报错翻译
 check("douyin cookie tip", "Cookie" in friendly_error("[Douyin] Fresh cookies are needed"))
